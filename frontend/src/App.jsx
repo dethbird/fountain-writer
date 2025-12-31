@@ -342,48 +342,6 @@ function App() {
     }
   }
 
-  const clearSaved = () => {
-    localStorage.removeItem('fountain-script')
-    setHasSavedScript(false)
-    setLastSavedDate(null)
-    // Restore default script
-    setCode(defaultScriptContent)
-    processText(defaultScriptContent)
-  }
-
-  const copyToClipboard = async () => {
-    try {
-      await navigator.clipboard.writeText(code)
-    } catch (error) {
-      // Fallback for older browsers
-      const textArea = document.createElement('textarea')
-      textArea.value = code
-      document.body.appendChild(textArea)
-      textArea.select()
-      document.execCommand('copy')
-      document.body.removeChild(textArea)
-    }
-  }
-
-  const pasteFromClipboard = async () => {
-    try {
-      const text = await navigator.clipboard.readText()
-      setCode(text)
-      processText(text)
-    } catch (error) {
-      console.error('Error pasting from clipboard:', error)
-    }
-  }
-
-  // Clear the editor contents and update preview
-  const clearEditor = () => {
-    setCode('')
-    processText('')
-    try {
-      if (editorRef.current && editorRef.current.focus) editorRef.current.focus()
-    } catch (e) {}
-  }
-
   // Handle cursor position changes from CodeMirror
   const handleCursorChange = useCallback((lineNumber) => {
     const currentBlocks = blocksRef.current
@@ -521,62 +479,20 @@ function App() {
       <div className="persistence-toolbar">
         <div className="toolbar-group">
           <button 
-            className={`toolbar-btn ${!code.trim() || isSaving ? 'disabled' : ''}`}
-            onClick={saveScript}
-            disabled={!code.trim() || isSaving}
-            title={'Save current script to browser storage'}
+            className="toolbar-btn"
+            title="Save current script"
           >
-                <i className={`fas ${isSaving ? 'fa-spinner fa-spin' : 'fa-save'}`}></i>
+                <i className="fas fa-save"></i>
                 Save
               </button>
               
               <button 
-                className={`toolbar-btn ${!hasSavedScript ? 'disabled' : ''}`}
-                onClick={loadScript}
-                disabled={!hasSavedScript}
-                title={lastSavedDate ? `Load saved script (${lastSavedDate.toLocaleDateString()} ${lastSavedDate.toLocaleTimeString()})` : 'Load saved script'}
+                className="toolbar-btn"
+                title="Load saved script"
               >
                 <i className="fas fa-folder-open"></i>
                 Load
               </button>
-              
-              <button 
-                className="toolbar-btn"
-                onClick={copyToClipboard}
-                title="Copy editor contents to clipboard"
-              >
-                <i className="fas fa-copy"></i>
-                Copy
-              </button>
-              
-              <button 
-                className="toolbar-btn"
-                onClick={pasteFromClipboard}
-                title="Paste from clipboard to editor"
-              >
-                <i className="fas fa-paste"></i>
-                Paste
-              </button>
-          
-          <button
-            className={`toolbar-btn danger ${!code.trim() ? 'disabled' : ''}`}
-            onClick={clearEditor}
-            disabled={!code.trim()}
-            title="Clear editor contents"
-          >
-            <i className="fas fa-trash"></i>
-            Clear Editor
-          </button>
-
-          <button 
-            className={`toolbar-btn danger ${!hasSavedScript ? 'disabled' : ''}`}
-            onClick={clearSaved}
-            disabled={!hasSavedScript}
-            title="Clear saved script from storage"
-          >
-            <i className="fas fa-trash"></i>
-            Clear Saved
-          </button>
 
           <div className="toolbar-divider"></div>
           

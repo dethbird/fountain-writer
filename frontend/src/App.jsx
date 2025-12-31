@@ -1,12 +1,15 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import './App.css'
 import CodeMirrorEditor from './components/CodeMirrorEditor'
+import Login from './components/Login'
 import { usePreviewWorker } from './hooks/usePreviewWorker'
 import { usePlayerWorker } from './hooks/usePlayerWorker'
 import defaultScriptContent from './assets/defaultScript.fountain?raw'
 
 // Main App component
 function App() {
+  const [authChecked, setAuthChecked] = useState(false)
+  const [user, setUser] = useState(null)
   const [showDesktopSuggestion, setShowDesktopSuggestion] = useState(false)
   const [code, setCode] = useState('')
   const [isHelpModalOpen, setIsHelpModalOpen] = useState(false)
@@ -22,6 +25,24 @@ function App() {
   const appRef = useRef(null)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
+
+  // Check authentication status on mount
+  useEffect(() => {
+    fetch('/api/me', {
+      credentials: 'include'
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data.authenticated && data.user) {
+          setUser(data.user)
+        }
+        setAuthChecked(true)
+      })
+      .catch(err => {
+        console.error('Auth check failed:', err)
+        setAuthChecked(true)
+      })
+  }, [])
 
   // Load script content on component mount - prioritize localStorage over default
   useEffect(() => {
@@ -292,6 +313,21 @@ function App() {
     }
   }
 
+  const handleLogout = async () => {
+    try {
+      await fetch('/auth/logout', {
+        method: 'POST',
+        credentials: 'include'
+      })
+      setUser(null)
+      // Optionally reload to clear any app state
+      window.location.href = '/'
+    } catch (err) {
+      console.error('Logout failed:', err)
+      alert('Logout failed. Please try again.')
+    }
+  }
+
   const loadScript = () => {
     const savedData = localStorage.getItem('fountain-script')
     if (savedData) {
@@ -444,6 +480,20 @@ function App() {
     }
   }
 
+  // Show loading state while checking auth
+  if (!authChecked) {
+    return (
+      <div className="fountain-app" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
+        <div>Loading...</div>
+      </div>
+    )
+  }
+
+  // Show login if not authenticated
+  if (!user) {
+    return <Login />
+  }
+
   return (
   <div className="fountain-app" ref={appRef}>
       {showDesktopSuggestion && (
@@ -565,6 +615,33 @@ function App() {
             <i className="fas fa-download" aria-hidden="true"></i>
             Demo
           </button>
+
+          {/* Logout Button */}
+          {user && (
+            <>
+              <div className="toolbar-divider"></div>
+              <button
+                className="toolbar-btn"
+                onClick={handleLogout}
+                title={`Logged in as ${user.email}`}
+                aria-label="Logout"
+                style={{ marginLeft: 'auto' }}
+              >
+                <i className="fas fa-sign-out-alt" aria-hidden="true"></i>
+                Logout
+              </button>
+            </>
+          )}
+
+          {/* Move last-saved next to Characters button for better discoverability */}
+          {lastSavedDate && (
+            <div className="last-saved" style={{ marginLeft: 8 }}>
+              Last saved: {lastSavedDate.toLocaleDateString()} at {lastSavedDate.toLocaleTimeString()}
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* Demo Scripts Modal */}
       {isDemoModalOpen && (
         <div className="modal-overlay" onClick={() => setIsDemoModalOpen(false)}>
@@ -644,15 +721,6 @@ function App() {
           </div>
         </div>
       )}
-          {/* Move last-saved next to Characters button for better discoverability */}
-          {lastSavedDate && (
-            <div className="last-saved" style={{ marginLeft: 8 }}>
-              Last saved: {lastSavedDate.toLocaleDateString()} at {lastSavedDate.toLocaleTimeString()}
-            </div>
-          )}
-        </div>
-        
-      </div>
 
       {/* Mobile View Toggle */}
       <div className="mobile-view-toggle">

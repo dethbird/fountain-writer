@@ -5,6 +5,13 @@
   font-weight: 400;
 }
 
+/* Override Bulma body background */
+body {
+  background-color: #1a1a1a !important;
+  margin: 0;
+  padding: 0;
+}
+
 /* Ensure React app inherits dark theme */
 #root {
   width: 100%;

@@ -14,6 +14,11 @@ if (file_exists($envFile)) {
     $dotenv->load();
 }
 
+// Initialize database connection (lazy loaded on first use)
+// This ensures the Database service is available throughout the app
+// Connection will be established when Database::getPdo() is first called
+use App\Services\Database;
+
 $app = AppFactory::create();
 
 // Configure Twig

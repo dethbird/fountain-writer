@@ -480,6 +480,14 @@ function App() {
         <div className="toolbar-group">
           <button 
             className="toolbar-btn"
+            title="New action"
+          >
+            <i className="fas fa-file"></i>
+            New
+          </button>
+
+          <button 
+            className="toolbar-btn"
             title="Save current script"
           >
                 <i className="fas fa-save"></i>
@@ -493,6 +501,14 @@ function App() {
                 <i className="fas fa-folder-open"></i>
                 Load
               </button>
+
+          <div className="toolbar-divider"></div>
+
+          {/* Script Title and Last Saved Info */}
+          <div style={{ display: 'flex', flexDirection: 'column', marginLeft: '8px', marginRight: '8px' }}>
+            <span style={{ fontSize: '0.9rem', fontWeight: '600', color: '#f5f5f5' }}>Untitled Script</span>
+            <span style={{ fontSize: '0.7rem', color: '#999' }}>Last saved: Never</span>
+          </div>
 
           <div className="toolbar-divider"></div>
           

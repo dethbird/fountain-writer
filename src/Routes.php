@@ -12,6 +12,9 @@ return function (App $app): void {
     $app->get('/api/health', [HealthController::class, 'index']);
     $app->get('/api/me', [AuthController::class, 'me']);
     $app->get('/api/scripts', [ScriptController::class, 'getScripts']);
+    $app->get('/api/scripts/{id}', [ScriptController::class, 'getScript']);
+    $app->post('/api/scripts', [ScriptController::class, 'createScript']);
+    $app->put('/api/scripts/{id}', [ScriptController::class, 'updateScript']);
     
     // Auth routes
     $app->get('/auth/google', [AuthController::class, 'googleLogin']);

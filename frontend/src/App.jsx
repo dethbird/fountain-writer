@@ -21,6 +21,7 @@ function App() {
   const [hasSavedScript, setHasSavedScript] = useState(false)
   const [lastSavedDate, setLastSavedDate] = useState(null)
   const [showScriptSelector, setShowScriptSelector] = useState(false)
+  const [currentScriptId, setCurrentScriptId] = useState(null)
   const [currentScriptTitle, setCurrentScriptTitle] = useState('Untitled Script')
   const [currentScriptUpdated, setCurrentScriptUpdated] = useState(null)
   const previewRef = useRef(null)
@@ -48,28 +49,50 @@ function App() {
       })
   }, [])
 
-  // Load script content on component mount - prioritize localStorage over default
+  // Load script content on component mount - check localStorage for script ID
   useEffect(() => {
-    const savedData = localStorage.getItem('fountain-script')
-    let scriptToLoad = defaultScriptContent // fallback to default
-    
-    if (savedData) {
-      try {
-        const parsed = JSON.parse(savedData)
-        scriptToLoad = parsed.content
-        setHasSavedScript(true)
-        setLastSavedDate(new Date(parsed.savedAt))
-      } catch (error) {
-        console.error('Error parsing saved script:', error)
-        localStorage.removeItem('fountain-script')
-        // Will use default script as fallback
+    const loadInitialScript = async () => {
+      const currentScriptIdStr = localStorage.getItem('fountain-current-script-id')
+      
+      if (currentScriptIdStr && user) {
+        // Load script from database
+        try {
+          const response = await fetch(`/api/scripts/${currentScriptIdStr}`, {
+            credentials: 'include'
+          })
+          
+          if (response.ok) {
+            const data = await response.json()
+            const script = data.script
+            setCode(script.source)
+            processText(script.source)
+            try { if (typeof parsePanels === 'function') parsePanels(script.source) } catch (e) {}
+            setCurrentScriptId(script.id)
+            setCurrentScriptTitle(script.title)
+            setCurrentScriptUpdated(new Date(script.updated_at))
+            return
+          }
+        } catch (error) {
+          console.error('Error loading script from DB:', error)
+          localStorage.removeItem('fountain-current-script-id')
+        }
       }
+      
+      // Load default script if no ID or loading failed
+      setCode(defaultScriptContent)
+      processText(defaultScriptContent)
+      try { if (typeof parsePanels === 'function') parsePanels(defaultScriptContent) } catch (e) {}
     }
     
-  setCode(scriptToLoad)
-  processText(scriptToLoad)
-  try { if (typeof parsePanels === 'function') parsePanels(scriptToLoad) } catch (e) {}
-  }, []) // Remove processText dependency to prevent infinite loop
+    if (user) {
+      loadInitialScript()
+    } else if (authChecked && !user) {
+      // Not logged in, just load default
+      setCode(defaultScriptContent)
+      processText(defaultScriptContent)
+      try { if (typeof parsePanels === 'function') parsePanels(defaultScriptContent) } catch (e) {}
+    }
+  }, [user, authChecked])
 
   // Detect mobile-like clients and suggest enabling the browser "Desktop site" option
   useEffect(() => {
@@ -300,21 +323,77 @@ function App() {
     setShowNestingTooltip(false)
   }, [playerIndex])
 
-  // localStorage operations
+  // Save script to database
   const saveScript = async () => {
     if (!code.trim()) return
     setIsSaving(true)
+    
     try {
-      const scriptData = {
-        content: code,
-        savedAt: new Date().toISOString()
+      if (currentScriptId) {
+        // Update existing script
+        const response = await fetch(`/api/scripts/${currentScriptId}`, {
+          method: 'PUT',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            source: code
+          })
+        })
+        
+        if (response.ok) {
+          const data = await response.json()
+          setCurrentScriptUpdated(new Date(data.script.updated_at))
+        } else {
+          alert('Failed to save script')
+        }
+      } else {
+        // Create new script - prompt for title
+        const title = prompt('Enter a title for your script:', 'Untitled Script')
+        if (!title) {
+          setIsSaving(false)
+          return
+        }
+        
+        const response = await fetch('/api/scripts', {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            title: title,
+            source: code
+          })
+        })
+        
+        if (response.ok) {
+          const data = await response.json()
+          setCurrentScriptId(data.script.id)
+          setCurrentScriptTitle(data.script.title)
+          setCurrentScriptUpdated(new Date(data.script.updated_at))
+          localStorage.setItem('fountain-current-script-id', data.script.id.toString())
+        } else {
+          alert('Failed to save script')
+        }
       }
-      localStorage.setItem('fountain-script', JSON.stringify(scriptData))
-      setHasSavedScript(true)
-      setLastSavedDate(new Date())
+    } catch (error) {
+      console.error('Error saving script:', error)
+      alert('Error saving script')
     } finally {
       setIsSaving(false)
     }
+  }
+
+  const handleNewScript = () => {
+    setCode(defaultScriptContent)
+    processText(defaultScriptContent)
+    try { if (typeof parsePanels === 'function') parsePanels(defaultScriptContent) } catch (e) {}
+    setCurrentScriptId(null)
+    setCurrentScriptTitle('Untitled Script')
+    setCurrentScriptUpdated(null)
+    localStorage.removeItem('fountain-current-script-id')
   }
 
   const handleLogout = async () => {
@@ -336,8 +415,10 @@ function App() {
     setCode(script.source)
     processText(script.source)
     try { if (typeof parsePanels === 'function') parsePanels(script.source) } catch (e) {}
+    setCurrentScriptId(script.id)
     setCurrentScriptTitle(script.title)
     setCurrentScriptUpdated(new Date(script.updated_at))
+    localStorage.setItem('fountain-current-script-id', script.id.toString())
     setShowScriptSelector(false)
   }
 
@@ -489,17 +570,20 @@ function App() {
         <div className="toolbar-group">
           <button 
             className="toolbar-btn"
-            title="New action"
+            title="New script"
+            onClick={handleNewScript}
           >
             <i className="fas fa-file"></i>
             New
           </button>
 
           <button 
-            className="toolbar-btn"
+            className={`toolbar-btn ${isSaving ? 'disabled' : ''}`}
             title="Save current script"
+            onClick={saveScript}
+            disabled={isSaving}
           >
-                <i className="fas fa-save"></i>
+                <i className={`fas ${isSaving ? 'fa-spinner fa-spin' : 'fa-save'}`}></i>
                 Save
               </button>
               

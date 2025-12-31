@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react'
 import './App.css'
 import CodeMirrorEditor from './components/CodeMirrorEditor'
 import Login from './components/Login'
+import ScriptSelector from './components/ScriptSelector'
 import { usePreviewWorker } from './hooks/usePreviewWorker'
 import { usePlayerWorker } from './hooks/usePlayerWorker'
 import defaultScriptContent from './assets/defaultScript.fountain?raw'
@@ -19,6 +20,9 @@ function App() {
   const [currentLine, setCurrentLine] = useState(0)
   const [hasSavedScript, setHasSavedScript] = useState(false)
   const [lastSavedDate, setLastSavedDate] = useState(null)
+  const [showScriptSelector, setShowScriptSelector] = useState(false)
+  const [currentScriptTitle, setCurrentScriptTitle] = useState('Untitled Script')
+  const [currentScriptUpdated, setCurrentScriptUpdated] = useState(null)
   const previewRef = useRef(null)
   const editorRef = useRef(null)
   const blocksRef = useRef([])
@@ -328,18 +332,13 @@ function App() {
     }
   }
 
-  const loadScript = () => {
-    const savedData = localStorage.getItem('fountain-script')
-    if (savedData) {
-      try {
-        const parsed = JSON.parse(savedData)
-        setCode(parsed.content)
-        processText(parsed.content)
-        setLastSavedDate(new Date(parsed.savedAt))
-      } catch (error) {
-        console.error('Error loading saved script:', error)
-      }
-    }
+  const handleSelectScript = (script) => {
+    setCode(script.source)
+    processText(script.source)
+    try { if (typeof parsePanels === 'function') parsePanels(script.source) } catch (e) {}
+    setCurrentScriptTitle(script.title)
+    setCurrentScriptUpdated(new Date(script.updated_at))
+    setShowScriptSelector(false)
   }
 
   // Handle cursor position changes from CodeMirror
@@ -452,6 +451,16 @@ function App() {
     return <Login />
   }
 
+  // Show script selector if open
+  if (showScriptSelector) {
+    return (
+      <ScriptSelector 
+        onSelectScript={handleSelectScript}
+        onCancel={() => setShowScriptSelector(false)}
+      />
+    )
+  }
+
   return (
   <div className="fountain-app" ref={appRef}>
       {showDesktopSuggestion && (
@@ -497,6 +506,7 @@ function App() {
               <button 
                 className="toolbar-btn"
                 title="Load saved script"
+                onClick={() => setShowScriptSelector(true)}
               >
                 <i className="fas fa-folder-open"></i>
                 Load
@@ -506,8 +516,10 @@ function App() {
 
           {/* Script Title and Last Saved Info */}
           <div style={{ display: 'flex', flexDirection: 'column', marginLeft: '8px', marginRight: '8px' }}>
-            <span style={{ fontSize: '0.9rem', fontWeight: '600', color: '#f5f5f5' }}>Untitled Script</span>
-            <span style={{ fontSize: '0.7rem', color: '#999' }}>Last saved: Never</span>
+            <span style={{ fontSize: '0.9rem', fontWeight: '600', color: '#f5f5f5' }}>{currentScriptTitle}</span>
+            <span style={{ fontSize: '0.7rem', color: '#999' }}>
+              {currentScriptUpdated ? `Last saved: ${currentScriptUpdated.toLocaleDateString()} ${currentScriptUpdated.toLocaleTimeString()}` : 'Last saved: Never'}
+            </span>
           </div>
 
           <div className="toolbar-divider"></div>

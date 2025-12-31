@@ -5,11 +5,13 @@ use Slim\App;
 use App\Controllers\HomeController;
 use App\Controllers\HealthController;
 use App\Controllers\AuthController;
+use App\Controllers\ScriptController;
 
 return function (App $app): void {
     // API routes first
     $app->get('/api/health', [HealthController::class, 'index']);
     $app->get('/api/me', [AuthController::class, 'me']);
+    $app->get('/api/scripts', [ScriptController::class, 'getScripts']);
     
     // Auth routes
     $app->get('/auth/google', [AuthController::class, 'googleLogin']);

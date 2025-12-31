@@ -396,6 +396,29 @@ function App() {
     localStorage.removeItem('fountain-current-script-id')
   }
 
+  const handleDeleteScript = async () => {
+    if (!currentScriptId) return
+    
+    const confirmed = confirm(`Are you sure you want to delete "${currentScriptTitle}"? This cannot be undone.`)
+    if (!confirmed) return
+    
+    try {
+      const response = await fetch(`/api/scripts/${currentScriptId}`, {
+        method: 'DELETE',
+        credentials: 'include'
+      })
+      
+      if (response.ok) {
+        handleNewScript()
+      } else {
+        alert('Failed to delete script')
+      }
+    } catch (error) {
+      console.error('Error deleting script:', error)
+      alert('Error deleting script')
+    }
+  }
+
   const handleLogout = async () => {
     try {
       await fetch('/auth/logout', {
@@ -595,6 +618,16 @@ function App() {
                 <i className="fas fa-folder-open"></i>
                 Load
               </button>
+
+          {currentScriptId && (
+            <button 
+              className="toolbar-btn danger"
+              title="Delete current script"
+              onClick={handleDeleteScript}
+            >
+              <i className="fas fa-trash"></i>
+            </button>
+          )}
 
           <div className="toolbar-divider"></div>
 

@@ -15,6 +15,7 @@ return function (App $app): void {
     $app->get('/api/scripts/{id}', [ScriptController::class, 'getScript']);
     $app->post('/api/scripts', [ScriptController::class, 'createScript']);
     $app->put('/api/scripts/{id}', [ScriptController::class, 'updateScript']);
+    $app->delete('/api/scripts/{id}', [ScriptController::class, 'deleteScript']);
     
     // Auth routes
     $app->get('/auth/google', [AuthController::class, 'googleLogin']);

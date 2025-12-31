@@ -263,4 +263,60 @@ class ScriptController
                 ->withStatus(500);
         }
     }
+    
+    public function deleteScript(Request $request, Response $response, array $args): Response
+    {
+        $session = new SessionHelper();
+        
+        if (!$session->exists('user_id')) {
+            $response->getBody()->write(json_encode([
+                'error' => 'Not authenticated'
+            ]));
+            return $response
+                ->withHeader('Content-Type', 'application/json')
+                ->withStatus(401);
+        }
+        
+        $userId = $session->get('user_id');
+        $scriptId = (int)$args['id'];
+        
+        try {
+            $db = Database::getPdo();
+            
+            // Check if script exists and belongs to user
+            $stmt = $db->prepare('SELECT id FROM scripts WHERE id = :id AND user_id = :user_id');
+            $stmt->execute(['id' => $scriptId, 'user_id' => $userId]);
+            
+            if (!$stmt->fetch()) {
+                $response->getBody()->write(json_encode([
+                    'error' => 'Script not found'
+                ]));
+                return $response
+                    ->withHeader('Content-Type', 'application/json')
+                    ->withStatus(404);
+            }
+            
+            // Delete the script
+            $stmt = $db->prepare('DELETE FROM scripts WHERE id = :id AND user_id = :user_id');
+            $stmt->execute(['id' => $scriptId, 'user_id' => $userId]);
+            
+            $response->getBody()->write(json_encode([
+                'success' => true
+            ]));
+            
+            return $response
+                ->withHeader('Content-Type', 'application/json')
+                ->withStatus(200);
+        } catch (\Exception $e) {
+            error_log('Error deleting script: ' . $e->getMessage());
+            
+            $response->getBody()->write(json_encode([
+                'error' => 'Failed to delete script'
+            ]));
+            
+            return $response
+                ->withHeader('Content-Type', 'application/json')
+                ->withStatus(500);
+        }
+    }
 }

@@ -31,7 +31,7 @@ $app->add(TwigMiddleware::create($app, $twig));
 
 // Session middleware
 $sessionName = $_ENV['APP_SESSION_NAME'] ?? 'fountain_session';
-$app->add(new \SlimSession\Middleware([
+$app->add(new \Slim\Middleware\Session([
     'name' => $sessionName,
     'autorefresh' => true,
     'lifetime' => '2 hours',

@@ -29,6 +29,17 @@ $twig = Twig::create(__DIR__ . '/../templates', [
 // Add Twig-View Middleware
 $app->add(TwigMiddleware::create($app, $twig));
 
+// Session middleware
+$sessionName = $_ENV['APP_SESSION_NAME'] ?? 'fountain_session';
+$app->add(new \SlimSession\Middleware([
+    'name' => $sessionName,
+    'autorefresh' => true,
+    'lifetime' => '2 hours',
+    'httponly' => true,
+    'secure' => true,
+    'samesite' => 'Lax',
+]));
+
 // Base path if deployed in a subdirectory
 $basePath = $_ENV['APP_BASE_PATH'] ?? '';
 if ($basePath) {

@@ -1,16 +1,16 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import './App.css'
 import CodeMirrorEditor from './components/CodeMirrorEditor'
-import { openFolderPicker } from './drive/picker'
-import { loadDriveState, clearDriveState } from './drive/state'
-import { listFountainFilesInFolder, listFilesInFolder, getFileContent, createFileInFolder, updateFileContent } from './drive/files'
-import { persistDriveState } from './drive/persistence'
+import Login from './components/Login'
+import ScriptSelector from './components/ScriptSelector'
 import { usePreviewWorker } from './hooks/usePreviewWorker'
 import { usePlayerWorker } from './hooks/usePlayerWorker'
 import defaultScriptContent from './assets/defaultScript.fountain?raw'
 
 // Main App component
 function App() {
+  const [authChecked, setAuthChecked] = useState(false)
+  const [user, setUser] = useState(null)
   const [showDesktopSuggestion, setShowDesktopSuggestion] = useState(false)
   const [code, setCode] = useState('')
   const [isHelpModalOpen, setIsHelpModalOpen] = useState(false)
@@ -20,109 +20,79 @@ function App() {
   const [currentLine, setCurrentLine] = useState(0)
   const [hasSavedScript, setHasSavedScript] = useState(false)
   const [lastSavedDate, setLastSavedDate] = useState(null)
-  const [gdriveOn, setGdriveOn] = useState(() => {
-    try {
-      return localStorage.getItem('fountain:gdriveOn') === '1'
-    } catch (e) {
-      return false
-    }
-  })
-  const [driveState, setDriveState] = useState(() => loadDriveState())
-  // Merge persisted drive state (localStorage) with App reactive state so the
-  // toolbar always reflects the up-to-date values. This prevents cases where
-  // localStorage has a fileName but React state hasn't been updated yet.
-  const persistedDriveState = { ...(loadDriveState() || {}), ...(driveState || {}) }
-
-  // Ensure App updates when files are selected/cleared elsewhere (picker/modal)
-  useEffect(() => {
-    const onFileSelected = (e) => {
-      try {
-        const detail = e && e.detail ? e.detail : null
-        if (detail && detail.id) {
-          const next = { ...loadDriveState(), fileId: detail.id, fileName: detail.name, file: detail }
-          try { persistDriveState(next) } catch (err) { console.error('App: persistDriveState failed', err) }
-          setDriveState(next)
-        }
-      } catch (err) { console.error('App: fileSelected handler failed', err) }
-    }
-    const onFileCleared = () => {
-      try {
-        const s = loadDriveState() || {}
-        const next = { ...s, fileId: undefined, fileName: undefined, file: undefined }
-        try { persistDriveState(next) } catch (err) { console.error('App: persistDriveState failed', err) }
-        setDriveState(next)
-      } catch (err) { console.error('App: fileCleared handler failed', err) }
-    }
-    window.addEventListener('fountain:drive:fileSelected', onFileSelected)
-    window.addEventListener('fountain:drive:fileCleared', onFileCleared)
-    return () => {
-      window.removeEventListener('fountain:drive:fileSelected', onFileSelected)
-      window.removeEventListener('fountain:drive:fileCleared', onFileCleared)
-    }
-  }, [])
-  // Consider both persisted localStorage state and in-memory driveState so buttons
-  // reflect a folder selected in a different context (picker/fallback persist).
-  const hasDriveFolder = !!(persistedDriveState && (persistedDriveState.folderId || persistedDriveState.folderName))
-  // Deterministic source-of-truth from persisted storage to avoid HMR/in-memory divergences
-  const _storedDriveState = loadDriveState() || {}
-  const storedHasDriveFolder = !!(_storedDriveState.folderId || _storedDriveState.folderName)
+  const [showScriptSelector, setShowScriptSelector] = useState(false)
+  const [currentScriptId, setCurrentScriptId] = useState(null)
+  const [currentScriptTitle, setCurrentScriptTitle] = useState('Untitled Script')
+  const [currentScriptUpdated, setCurrentScriptUpdated] = useState(null)
   const previewRef = useRef(null)
   const editorRef = useRef(null)
   const blocksRef = useRef([])
   const appRef = useRef(null)
   const [isFullscreen, setIsFullscreen] = useState(false)
-  // GDrive Load modal state
-  const [isGDriveLoadOpen, setIsGDriveLoadOpen] = useState(false)
-  const [gdriveFiles, setGdriveFiles] = useState([])
-  const [gdriveFolderName, setGdriveFolderName] = useState(null)
-  const [gdriveLoading, setGdriveLoading] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
-  const [isReloading, setIsReloading] = useState(false)
 
-  // Log when driveState changes so we can trace why UI doesn't show persisted file
+  // Check authentication status on mount
   useEffect(() => {
-    // Debug log removed: avoid noisy console output in normal usage
-  }, [driveState])
+    fetch('/api/me', {
+      credentials: 'include'
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data.authenticated && data.user) {
+          setUser(data.user)
+        }
+        setAuthChecked(true)
+      })
+      .catch(err => {
+        console.error('Auth check failed:', err)
+        setAuthChecked(true)
+      })
+  }, [])
 
-  // When in GDrive mode, show the Drive file's modifiedTime as the lastSavedDate
+  // Load script content on component mount - check localStorage for script ID
   useEffect(() => {
-    try {
-      if (gdriveOn) {
-        const s = persistedDriveState || {}
-        const fileMeta = s.file || {}
-        const mod = fileMeta.modifiedTime || fileMeta.modified_time || null
-        if (mod) {
-          setLastSavedDate(new Date(mod))
-          setHasSavedScript(true)
+    const loadInitialScript = async () => {
+      const currentScriptIdStr = localStorage.getItem('fountain-current-script-id')
+      
+      if (currentScriptIdStr && user) {
+        // Load script from database
+        try {
+          const response = await fetch(`/api/scripts/${currentScriptIdStr}`, {
+            credentials: 'include'
+          })
+          
+          if (response.ok) {
+            const data = await response.json()
+            const script = data.script
+            setCode(script.source)
+            processText(script.source)
+            try { if (typeof parsePanels === 'function') parsePanels(script.source) } catch (e) {}
+            setCurrentScriptId(script.id)
+            setCurrentScriptTitle(script.title)
+            setCurrentScriptUpdated(new Date(script.updated_at))
+            return
+          }
+        } catch (error) {
+          console.error('Error loading script from DB:', error)
+          localStorage.removeItem('fountain-current-script-id')
         }
       }
-    } catch (e) {
-      // ignore
-    }
-  }, [gdriveOn, driveState])
-
-  // Load script content on component mount - prioritize localStorage over default
-  useEffect(() => {
-    const savedData = localStorage.getItem('fountain-script')
-    let scriptToLoad = defaultScriptContent // fallback to default
-    
-    if (savedData) {
-      try {
-        const parsed = JSON.parse(savedData)
-        scriptToLoad = parsed.content
-        setHasSavedScript(true)
-        setLastSavedDate(new Date(parsed.savedAt))
-      } catch (error) {
-        console.error('Error parsing saved script:', error)
-        localStorage.removeItem('fountain-script')
-        // Will use default script as fallback
-      }
+      
+      // Load default script if no ID or loading failed
+      setCode(defaultScriptContent)
+      processText(defaultScriptContent)
+      try { if (typeof parsePanels === 'function') parsePanels(defaultScriptContent) } catch (e) {}
     }
     
-  setCode(scriptToLoad)
-  processText(scriptToLoad)
-  try { if (typeof parsePanels === 'function') parsePanels(scriptToLoad) } catch (e) {}
-  }, []) // Remove processText dependency to prevent infinite loop
+    if (user) {
+      loadInitialScript()
+    } else if (authChecked && !user) {
+      // Not logged in, just load default
+      setCode(defaultScriptContent)
+      processText(defaultScriptContent)
+      try { if (typeof parsePanels === 'function') parsePanels(defaultScriptContent) } catch (e) {}
+    }
+  }, [user, authChecked])
 
   // Detect mobile-like clients and suggest enabling the browser "Desktop site" option
   useEffect(() => {
@@ -138,122 +108,6 @@ function App() {
       }
     } catch (e) {
       // ignore detection errors
-    }
-  }, [])
-
-  // Global keyboard handler to toggle GDrive mode (Ctrl/Cmd+G). This keeps
-  // the logic centralized in App and allows swapping the persistence toolbar
-  // buttons in-place.
-  useEffect(() => {
-    const onKey = (e) => {
-      if ((e.ctrlKey || e.metaKey) && String(e.key).toLowerCase() === 'g') {
-        e.preventDefault()
-        setGdriveOn((v) => {
-          try { localStorage.setItem('fountain:gdriveOn', (!v) ? '1' : '0') } catch (err) {}
-          return !v
-        })
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [])
-
-  // Persist non-GDrive editor content when switching into GDrive mode, and
-  // restore from localStorage (or default script) when switching back to
-  // non-GDrive mode. This keeps user's local copy safe whenever they enable
-  // Drive persistence.
-  useEffect(() => {
-    try {
-      // On switch to GDrive mode (true): save current code to localStorage
-      if (gdriveOn) {
-        try {
-          const scriptData = {
-            content: code || '',
-            savedAt: new Date().toISOString()
-          }
-          localStorage.setItem('fountain-script', JSON.stringify(scriptData))
-          // mark that we have a saved script
-          setHasSavedScript(true)
-          setLastSavedDate(new Date())
-          console.log('App: saved local copy to fountain-script before entering GDrive mode')
-        } catch (err) {
-          console.error('App: failed to persist local script when entering GDrive mode', err)
-        }
-        // If a Drive file is already selected, asynchronously load it into the editor
-        try {
-          const ds = loadDriveState() || {}
-          const fileId = ds && ds.fileId ? ds.fileId : null
-          if (fileId) {
-            // mark reloading state while we fetch the Drive file
-            setIsReloading(true)
-            getFileContent(fileId).then((content) => {
-              setCode(content)
-              try { processText(content) } catch (e) { console.error('App: processText failed while loading Drive file on toggle', e) }
-              setHasSavedScript(true)
-              setLastSavedDate(new Date())
-              console.log('App: loaded selected Drive file after entering GDrive mode')
-            }).catch((err) => {
-              console.error('App: failed to load selected Drive file on entering GDrive mode', err)
-            }).finally(() => setIsReloading(false))
-          }
-        } catch (err) {
-          console.error('App: error while attempting to load Drive file on toggle', err)
-        }
-      } else {
-        // On switch out of GDrive mode (false): restore local copy if present
-        try {
-          const savedData = localStorage.getItem('fountain-script')
-          if (savedData) {
-            const parsed = JSON.parse(savedData)
-            const content = parsed && parsed.content ? parsed.content : defaultScriptContent
-            setCode(content)
-            try { processText(content) } catch (e) { console.error('App: processText failed while restoring local script', e) }
-            if (parsed && parsed.savedAt) setLastSavedDate(new Date(parsed.savedAt))
-            setHasSavedScript(!!(parsed && parsed.content))
-            console.log('App: restored local copy from fountain-script after leaving GDrive mode')
-          } else {
-            // no saved data; restore default script
-            setCode(defaultScriptContent)
-            try { processText(defaultScriptContent) } catch (e) { console.error('App: processText failed while loading default script', e) }
-            setHasSavedScript(false)
-            setLastSavedDate(null)
-            console.log('App: no local copy found, loaded default script after leaving GDrive mode')
-          }
-        } catch (err) {
-          console.error('App: failed to restore local script after leaving GDrive mode', err)
-        }
-      }
-    } catch (e) {
-      // don't let storage issues break the app
-    }
-    // Only run when gdriveOn changes intentionally
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gdriveOn])
-
-  // Keep App-level driveState in sync with DriveBar / picker events so we
-  // can show the selected folder in the persistence toolbar.
-  useEffect(() => {
-    const handler = (e) => {
-      try {
-        // @ts-ignore - event detail is untyped
-        const detail = e && e.detail ? e.detail : null
-        if (detail && detail.id) {
-          const next = { ...loadDriveState(), folderId: detail.id, folderName: detail.name, folder: detail }
-          try { persistDriveState(next) } catch (err) { console.error('App: persistDriveState failed', err) }
-          setDriveState(next)
-        } else {
-          setDriveState(loadDriveState())
-        }
-      } catch (err) {
-        console.error('App: failed to load drive state', err)
-      }
-    }
-    const onCleared = () => setDriveState({})
-    window.addEventListener('fountain:drive:folderSelected', handler)
-    window.addEventListener('fountain:drive:cleared', onCleared)
-    return () => {
-      window.removeEventListener('fountain:drive:folderSelected', handler)
-      window.removeEventListener('fountain:drive:cleared', onCleared)
     }
   }, [])
 
@@ -469,216 +323,126 @@ function App() {
     setShowNestingTooltip(false)
   }, [playerIndex])
 
-  // localStorage operations
+  // Save script to database
   const saveScript = async () => {
     if (!code.trim()) return
     setIsSaving(true)
+    
     try {
-      // Only attempt Drive operations when in GDrive mode
-      if (gdriveOn) {
-        try {
-          const ds = loadDriveState() || {}
-          const existingFileId = ds && ds.fileId ? ds.fileId : null
-          const folderId = ds && ds.folderId ? ds.folderId : null
-          const targetFileName = ds.fileName || `script-${new Date().toISOString().replace(/[:.]/g, '-')}.fountain`
-
-          if (existingFileId) {
-            console.log('Saving to existing Drive file', existingFileId)
-            const meta = await updateFileContent(existingFileId, code)
-            console.log('Saved script to Drive (updated):', meta)
-            const next = { ...ds, fileId: meta.id, fileName: meta.name, file: meta }
-            try { persistDriveState(next) } catch (e) {}
-            setDriveState(next)
-            try { window.dispatchEvent(new CustomEvent('fountain:drive:fileSelected', { detail: next })) } catch (e) {}
-            setHasSavedScript(true)
-            setLastSavedDate(new Date())
-            return
-          }
-
-          // If no existing file but user has Drive mode on and a folder selected, create a new file
-          if (folderId) {
-            console.log('Creating new Drive file in folder', folderId)
-            const meta = await createFileInFolder(folderId, targetFileName, code)
-            console.log('Saved script to Drive (created):', meta)
-            const next = { ...ds, fileId: meta.id, fileName: meta.name, file: meta }
-            try { persistDriveState(next) } catch (e) {}
-            setDriveState(next)
-            try { window.dispatchEvent(new CustomEvent('fountain:drive:fileSelected', { detail: next })) } catch (e) {}
-            setHasSavedScript(true)
-            setLastSavedDate(new Date())
-            return
-          }
-        } catch (e) {
-          console.error('GDrive save attempt failed', e)
+      if (currentScriptId) {
+        // Update existing script
+        const response = await fetch(`/api/scripts/${currentScriptId}`, {
+          method: 'PUT',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            source: code
+          })
+        })
+        
+        if (response.ok) {
+          const data = await response.json()
+          setCurrentScriptUpdated(new Date(data.script.updated_at))
+        } else {
+          alert('Failed to save script')
+        }
+      } else {
+        // Create new script - prompt for title
+        const title = prompt('Enter a title for your script:', 'Untitled Script')
+        if (!title) {
+          setIsSaving(false)
+          return
+        }
+        
+        const response = await fetch('/api/scripts', {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            title: title,
+            source: code
+          })
+        })
+        
+        if (response.ok) {
+          const data = await response.json()
+          setCurrentScriptId(data.script.id)
+          setCurrentScriptTitle(data.script.title)
+          setCurrentScriptUpdated(new Date(data.script.updated_at))
+          localStorage.setItem('fountain-current-script-id', data.script.id.toString())
+        } else {
+          alert('Failed to save script')
         }
       }
-
-      // Fallback: save to localStorage
-      const scriptData = {
-        content: code,
-        savedAt: new Date().toISOString()
-      }
-      localStorage.setItem('fountain-script', JSON.stringify(scriptData))
-      setHasSavedScript(true)
-      setLastSavedDate(new Date())
+    } catch (error) {
+      console.error('Error saving script:', error)
+      alert('Error saving script')
     } finally {
       setIsSaving(false)
     }
   }
 
-  // Open the Drive folder picker (used by the persistence toolbar Choose Folder button)
-  const chooseFolderApp = async () => {
-    try {
-      const pick = await openFolderPicker()
-      if (!pick) return
-      // Picker dispatches 'fountain:drive:folderSelected' which DriveBar listens to
-      // so we don't persist here. We simply trigger the picker.
-    } catch (err) {
-      console.error('Folder pick failed', err)
-      alert('Could not open folder picker. Check console for details.')
-    }
-  }
-
-  // Reload the currently selected Drive file into the editor
-  const reloadDriveFile = async () => {
-    try {
-      const ds = loadDriveState() || {}
-      const fileId = ds && ds.fileId ? ds.fileId : null
-      if (!fileId) return alert('No Drive file selected to reload')
-      setIsReloading(true)
-      const content = await getFileContent(fileId)
-      setCode(content)
-      try { processText(content) } catch (err) { console.error('processText failed', err) }
-  // update in-memory markers to reflect the loaded Drive content
-  setHasSavedScript(true)
-  setLastSavedDate(new Date())
-    } catch (err) {
-      console.error('Failed to reload Drive file', err)
-      alert('Failed to reload Drive file. See console for details.')
-    } finally {
-      setIsReloading(false)
-    }
-  }
-
-  // GDrive Save As: prompt for filename, append .fountain, create in selected folder
-  const gdriveSaveAs = async () => {
-    if (!code.trim()) return alert('Editor is empty')
-    try {
-      const ds = loadDriveState() || {}
-      const folderId = ds && ds.folderId ? ds.folderId : null
-      if (!folderId) return alert('No Drive folder selected')
-
-      // suggest a default base filename (without extension)
-      const suggested = ds.fileName ? ds.fileName.replace(/\.fountain$/i, '') : `script-${new Date().toISOString().replace(/[:.]/g, '-')}`
-      const input = window.prompt('Enter filename (without extension):', suggested)
-      if (input === null) return // user cancelled
-      const nameTrim = String(input || '').trim()
-      if (!nameTrim) return alert('Filename cannot be empty')
-      const filename = nameTrim.toLowerCase().endsWith('.fountain') ? nameTrim : `${nameTrim}.fountain`
-
-      // create file in selected folder
-      const meta = await createFileInFolder(folderId, filename, code)
-      console.log('GDrive Save As created:', meta)
-
-      const next = { ...ds, fileId: meta.id, fileName: meta.name, file: meta }
-      try { persistDriveState(next) } catch (e) {}
-      setDriveState(next)
-      try { window.dispatchEvent(new CustomEvent('fountain:drive:fileSelected', { detail: next })) } catch (e) {}
-
-  // mark as saved (Drive)
-  setHasSavedScript(true)
-  setLastSavedDate(new Date())
-    } catch (err) {
-      console.error('GDrive Save As failed', err)
-      alert('Failed to save file to Drive. See console for details.')
-    }
-  }
-
-  // Open modal and list .fountain files in selected folder
-  const openGDriveLoad = async () => {
-    try {
-      const ds = loadDriveState()
-      const fid = ds && ds.folderId ? ds.folderId : null
-      if (!fid) {
-        alert('No Drive folder selected. Use Change Folder first.')
-        return
-      }
-  setIsGDriveLoadOpen(true)
-  setGdriveFolderName(ds && ds.folderName ? ds.folderName : null)
-      setGdriveLoading(true)
-  const files = await listFilesInFolder(fid)
-  // Only include files that are plain binary/text blobs (application/octet-stream)
-  // which correspond to true .fountain files in our usage.
-  const fountainFiles = (files || []).filter((f) => f && (f.mimeType === 'application/octet-stream' || f.mimeType === 'text/plain'))
-  // Sort by modifiedTime descending (newest first). Some files may not have modifiedTime; treat them as oldest.
-  fountainFiles.sort((a, b) => {
-    const ta = a && a.modifiedTime ? new Date(a.modifiedTime).getTime() : 0
-    const tb = b && b.modifiedTime ? new Date(b.modifiedTime).getTime() : 0
-    return tb - ta
-  })
-  setGdriveFiles(fountainFiles)
-    } catch (err) {
-      console.error('openGDriveLoad failed', err)
-      alert('Could not list files from Drive. Check console for details.')
-    } finally {
-      setGdriveLoading(false)
-    }
-  }
-
-  const loadScript = () => {
-    const savedData = localStorage.getItem('fountain-script')
-    if (savedData) {
-      try {
-        const parsed = JSON.parse(savedData)
-        setCode(parsed.content)
-        processText(parsed.content)
-        setLastSavedDate(new Date(parsed.savedAt))
-      } catch (error) {
-        console.error('Error loading saved script:', error)
-      }
-    }
-  }
-
-  const clearSaved = () => {
-    localStorage.removeItem('fountain-script')
-    setHasSavedScript(false)
-    setLastSavedDate(null)
-    // Restore default script
+  const handleNewScript = () => {
     setCode(defaultScriptContent)
     processText(defaultScriptContent)
+    try { if (typeof parsePanels === 'function') parsePanels(defaultScriptContent) } catch (e) {}
+    setCurrentScriptId(null)
+    setCurrentScriptTitle('Untitled Script')
+    setCurrentScriptUpdated(null)
+    localStorage.removeItem('fountain-current-script-id')
   }
 
-  const copyToClipboard = async () => {
+  const handleDeleteScript = async () => {
+    if (!currentScriptId) return
+    
+    const confirmed = confirm(`Are you sure you want to delete "${currentScriptTitle}"? This cannot be undone.`)
+    if (!confirmed) return
+    
     try {
-      await navigator.clipboard.writeText(code)
+      const response = await fetch(`/api/scripts/${currentScriptId}`, {
+        method: 'DELETE',
+        credentials: 'include'
+      })
+      
+      if (response.ok) {
+        handleNewScript()
+      } else {
+        alert('Failed to delete script')
+      }
     } catch (error) {
-      // Fallback for older browsers
-      const textArea = document.createElement('textarea')
-      textArea.value = code
-      document.body.appendChild(textArea)
-      textArea.select()
-      document.execCommand('copy')
-      document.body.removeChild(textArea)
+      console.error('Error deleting script:', error)
+      alert('Error deleting script')
     }
   }
 
-  const pasteFromClipboard = async () => {
+  const handleLogout = async () => {
     try {
-      const text = await navigator.clipboard.readText()
-      setCode(text)
-      processText(text)
-    } catch (error) {
-      console.error('Error pasting from clipboard:', error)
+      await fetch('/auth/logout', {
+        method: 'POST',
+        credentials: 'include'
+      })
+      setUser(null)
+      // Optionally reload to clear any app state
+      window.location.href = '/'
+    } catch (err) {
+      console.error('Logout failed:', err)
+      alert('Logout failed. Please try again.')
     }
   }
 
-  // Clear the editor contents and update preview
-  const clearEditor = () => {
-    setCode('')
-    processText('')
-    try {
-      if (editorRef.current && editorRef.current.focus) editorRef.current.focus()
-    } catch (e) {}
+  const handleSelectScript = (script) => {
+    setCode(script.source)
+    processText(script.source)
+    try { if (typeof parsePanels === 'function') parsePanels(script.source) } catch (e) {}
+    setCurrentScriptId(script.id)
+    setCurrentScriptTitle(script.title)
+    setCurrentScriptUpdated(new Date(script.updated_at))
+    localStorage.setItem('fountain-current-script-id', script.id.toString())
+    setShowScriptSelector(false)
   }
 
   // Handle cursor position changes from CodeMirror
@@ -777,6 +541,30 @@ function App() {
     }
   }
 
+  // Show loading state while checking auth
+  if (!authChecked) {
+    return (
+      <div className="fountain-app" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
+        <div>Loading...</div>
+      </div>
+    )
+  }
+
+  // Show login if not authenticated
+  if (!user) {
+    return <Login />
+  }
+
+  // Show script selector if open
+  if (showScriptSelector) {
+    return (
+      <ScriptSelector 
+        onSelectScript={handleSelectScript}
+        onCancel={() => setShowScriptSelector(false)}
+      />
+    )
+  }
+
   return (
   <div className="fountain-app" ref={appRef}>
       {showDesktopSuggestion && (
@@ -803,154 +591,53 @@ function App() {
       {/* Persistence Toolbar */}
       <div className="persistence-toolbar">
         <div className="toolbar-group">
-          {!gdriveOn ? (
-            <> 
-              <button 
-                className={`toolbar-btn ${!code.trim() || isSaving ? 'disabled' : ''}`}
-                onClick={saveScript}
-                disabled={!code.trim() || isSaving}
-                title={'Save current script to browser storage'}
-              >
+          <button 
+            className="toolbar-btn"
+            title="New script"
+            onClick={handleNewScript}
+          >
+            <i className="fas fa-file"></i>
+            New
+          </button>
+
+          <button 
+            className={`toolbar-btn ${isSaving ? 'disabled' : ''}`}
+            title="Save current script"
+            onClick={saveScript}
+            disabled={isSaving}
+          >
                 <i className={`fas ${isSaving ? 'fa-spinner fa-spin' : 'fa-save'}`}></i>
                 Save
               </button>
               
               <button 
-                className={`toolbar-btn ${!hasSavedScript ? 'disabled' : ''}`}
-                onClick={loadScript}
-                disabled={!hasSavedScript}
-                title={lastSavedDate ? `Load saved script (${lastSavedDate.toLocaleDateString()} ${lastSavedDate.toLocaleTimeString()})` : 'Load saved script'}
+                className="toolbar-btn"
+                title="Load saved script"
+                onClick={() => setShowScriptSelector(true)}
               >
                 <i className="fas fa-folder-open"></i>
                 Load
               </button>
-              
-              <button 
-                className="toolbar-btn"
-                onClick={copyToClipboard}
-                title="Copy editor contents to clipboard"
-              >
-                <i className="fas fa-copy"></i>
-                Copy
-              </button>
-              
-              <button 
-                className="toolbar-btn"
-                onClick={pasteFromClipboard}
-                title="Paste from clipboard to editor"
-              >
-                <i className="fas fa-paste"></i>
-                Paste
-              </button>
-            </>
-            ) : (
-            // GDrive buttons replace the local persistence buttons in-place
-            <>
-              <button
-                className={`toolbar-btn ${(isSaving || isReloading) ? 'disabled' : ''}`}
-                onClick={chooseFolderApp}
-                disabled={isSaving || isReloading}
-                title={(isSaving || isReloading) ? 'Saving...' : (storedHasDriveFolder ? 'Change Drive folder' : 'Select Drive folder')}
-              >
-                <i className="fas fa-folder-open"></i>
-                {storedHasDriveFolder ? ' Change Folder' : ' Select Folder'}
-              </button>
-              <button className={`toolbar-btn ${(!code.trim() || !hasDriveFolder || isSaving || isReloading) ? 'disabled' : ''}`} onClick={saveScript} disabled={!code.trim() || !hasDriveFolder || isSaving || isReloading} title={'Save to Google Drive'}>
-                <i className={`${(isSaving || isReloading) ? 'fas fa-spinner fa-spin' : 'fab fa-google-drive'}`}></i>
-                GDrive Save
-              </button>
-              <button className={`toolbar-btn ${(!code.trim() || !hasDriveFolder || isSaving || isReloading) ? 'disabled' : ''}`} onClick={gdriveSaveAs} disabled={!code.trim() || !hasDriveFolder || isSaving || isReloading} title={(isSaving || isReloading) ? 'Saving...' : 'Save as to Google Drive'}><i className="fas fa-file-export"></i> GDrive Save As</button>
-              <button className={`toolbar-btn ${(!hasDriveFolder || isSaving || isReloading) ? 'disabled' : ''}`} onClick={openGDriveLoad} disabled={!hasDriveFolder || isSaving || isReloading} title={(isSaving || isReloading) ? 'Saving...' : 'Load from Google Drive'}><i className="fas fa-download"></i> GDrive Load</button>
-              
-            </>
-          )}
-          
-          {!gdriveOn && (
-            <button
-              className={`toolbar-btn danger ${!code.trim() ? 'disabled' : ''}`}
-              onClick={clearEditor}
-              disabled={!code.trim()}
-              title="Clear editor contents"
+
+          {currentScriptId && (
+            <button 
+              className="toolbar-btn danger"
+              title="Delete current script"
+              onClick={handleDeleteScript}
             >
               <i className="fas fa-trash"></i>
-              Clear Editor
             </button>
           )}
 
-          {!gdriveOn ? (
-            <button 
-              className={`toolbar-btn danger ${!hasSavedScript ? 'disabled' : ''}`}
-              onClick={clearSaved}
-              disabled={!hasSavedScript}
-              title="Clear saved script from storage"
-            >
-              <i className="fas fa-trash"></i>
-              Clear Saved
-            </button>
-          ) : (
-            // In GDrive mode replace the Clear Saved button with the selected
-            // folder display and a Clear link (similar to DriveBar).
-            <div style={{ fontSize: 12, color: '#f5f5f5' }}>
-              {persistedDriveState && persistedDriveState.folderName ? (
-                  <div>
-                    <div>
-                      <i className="fas fa-folder-open persistence-icon" aria-hidden="true"></i>
-                      {persistedDriveState.folderName}
-                    <a
-                      href="#"
-                      onClick={(e) => {
-                        e.preventDefault()
-                        try {
-                          clearDriveState()
-                          // Persisted state cleared; notify listeners
-                          setDriveState({})
-                          window.dispatchEvent(new CustomEvent('fountain:drive:cleared'))
-                          console.log('App: cleared drive state')
-                        } catch (err) {
-                          console.error('App: failed to clear drive state', err)
-                        }
-                      }}
-                      style={{ marginLeft: 8, color: '#ddd', textDecoration: 'underline', cursor: 'pointer', fontSize: 12 }}
-                    >
-                      <i className="fas fa-trash small-trash" aria-hidden="true"></i>
-                    </a>
-                    
-                  </div>
-                  {persistedDriveState && persistedDriveState.fileName ? (
-                    <div style={{ marginTop: 4 }}>
-                      <span style={{ fontSize: 12, color: '#ddd' }}>
-                        <i className="fas fa-file persistence-icon" aria-hidden="true"></i>
-                        {persistedDriveState.fileName}
-                      </span>
-                      <a
-                        href="#"
-                        onClick={(e) => {
-                          e.preventDefault()
-                          try {
-                            const next = { ...loadDriveState(), fileId: undefined, fileName: undefined, file: undefined }
-                            persistDriveState(next)
-                            setDriveState(next)
-                            window.dispatchEvent(new CustomEvent('fountain:drive:fileCleared'))
-                          } catch (err) {
-                            console.error('App: failed to clear file selection', err)
-                          }
-                        }}
-                        style={{ marginLeft: 8, color: '#ddd', textDecoration: 'underline', cursor: 'pointer', fontSize: 12 }}
-                      >
-                        <i className="fas fa-trash small-trash" aria-hidden="true"></i>
-                      </a>
-                      <i
-                        className={`${isReloading ? 'fas fa-spinner fa-spin small-action' : `fas fa-sync-alt small-action ${isSaving ? 'disabled' : ''}`}`}
-                        title={isReloading ? 'Reloading...' : 'Reload file from Drive'}
-                        onClick={(e) => { e.preventDefault(); if (!isSaving && !isReloading) reloadDriveFile() }}
-                        aria-hidden="true"
-                      ></i>
-                    </div>
-                  ) : null}
-                </div>
-              ) : 'No folder selected'}
-            </div>
-          )}
+          <div className="toolbar-divider"></div>
+
+          {/* Script Title and Last Saved Info */}
+          <div style={{ display: 'flex', flexDirection: 'column', marginLeft: '8px', marginRight: '8px' }}>
+            <span style={{ fontSize: '0.9rem', fontWeight: '600', color: '#f5f5f5' }}>{currentScriptTitle}</span>
+            <span style={{ fontSize: '0.7rem', color: '#999' }}>
+              {currentScriptUpdated ? `Last saved: ${currentScriptUpdated.toLocaleDateString()} ${currentScriptUpdated.toLocaleTimeString()}` : 'Last saved: Never'}
+            </span>
+          </div>
 
           <div className="toolbar-divider"></div>
           
@@ -989,6 +676,33 @@ function App() {
             <i className="fas fa-download" aria-hidden="true"></i>
             Demo
           </button>
+
+          {/* Logout Button */}
+          {user && (
+            <>
+              <div className="toolbar-divider"></div>
+              <button
+                className="toolbar-btn"
+                onClick={handleLogout}
+                title={`Logged in as ${user.email}`}
+                aria-label="Logout"
+                style={{ marginLeft: 'auto' }}
+              >
+                <i className="fas fa-sign-out-alt" aria-hidden="true"></i>
+                Logout
+              </button>
+            </>
+          )}
+
+          {/* Move last-saved next to Characters button for better discoverability */}
+          {lastSavedDate && (
+            <div className="last-saved" style={{ marginLeft: 8 }}>
+              Last saved: {lastSavedDate.toLocaleDateString()} at {lastSavedDate.toLocaleTimeString()}
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* Demo Scripts Modal */}
       {isDemoModalOpen && (
         <div className="modal-overlay" onClick={() => setIsDemoModalOpen(false)}>
@@ -1068,15 +782,6 @@ function App() {
           </div>
         </div>
       )}
-          {/* Move last-saved next to Characters button for better discoverability */}
-          {lastSavedDate && (
-            <div className="last-saved" style={{ marginLeft: 8 }}>
-              Last saved: {lastSavedDate.toLocaleDateString()} at {lastSavedDate.toLocaleTimeString()}
-            </div>
-          )}
-        </div>
-        
-      </div>
 
       {/* Mobile View Toggle */}
       <div className="mobile-view-toggle">
@@ -1539,80 +1244,6 @@ function App() {
                   <p>Use = for synopsis notes, === for page breaks, ~ for lyrics. Each lyric line must begin with ~.</p>
                 </div>
               </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* GDrive Load Modal */}
-      {isGDriveLoadOpen && (
-        <div className="modal-overlay" onClick={() => setIsGDriveLoadOpen(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h2>Open .fountain from Drive</h2>
-              <button className="modal-close" onClick={() => setIsGDriveLoadOpen(false)}>×</button>
-            </div>
-            {gdriveFolderName && (
-              <div style={{ padding: '0 16px 8px 16px', color: '#cbd5e1', fontSize: 13 }}>
-                <i className="fas fa-folder-open persistence-icon" aria-hidden="true"></i>
-                <strong style={{ color: '#e2e8f0' }}>{gdriveFolderName}</strong>
-              </div>
-            )}
-            <div className="modal-body">
-              {gdriveLoading ? (
-                <div>Loading...</div>
-              ) : (
-                <div>
-                  {gdriveFiles && gdriveFiles.length > 0 ? (
-                    <ul>
-                      {gdriveFiles.map((f) => (
-                        <li key={f.id} style={{ padding: '6px 0' }}>
-                          <a
-                            href="#"
-                            onClick={async (e) => {
-                              e.preventDefault()
-                              try {
-                                // Fetch file content from Drive and load into editor
-                                const content = await getFileContent(f.id)
-                                setCode(content)
-                                try { processText(content) } catch (err) { console.error('processText failed', err) }
-                                // Persist selected file metadata in drive state (merge with existing)
-                                try {
-                                  const current = loadDriveState() || {}
-                                  const next = { ...current, fileId: f.id, fileName: f.name, file: f }
-                                  try { console.log('App: before persist, localStorage=', localStorage.getItem('fountain:driveState')) } catch (e) {}
-                                  persistDriveState(next)
-                                  try { console.log('App: after persist, localStorage=', localStorage.getItem('fountain:driveState')) } catch (e) {}
-                                  setDriveState(next)
-                                  try { window.dispatchEvent(new CustomEvent('fountain:drive:fileSelected', { detail: f })) } catch (e) {}
-                                } catch (err) {
-                                  console.error('Failed to persist selected file', err)
-                                }
-                                setIsGDriveLoadOpen(false)
-                              } catch (err) {
-                                console.error('Failed to load file from Drive', err)
-                                alert('Could not load file from Drive. Check console for details.')
-                              }
-                            }}
-                          >
-                            <span style={{ display: 'inline-block', minWidth: 240 }}> 
-                              {f.name}
-                            </span>
-                            <span style={{ marginLeft: 8, color: '#9ca3af', fontSize: 12 }}>
-                              {f.modifiedTime ? new Date(f.modifiedTime).toLocaleString() : 'unknown'}
-                            </span>
-                          </a>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <div>No .fountain files found in this folder.</div>
-                  )}
-                </div>
-              )}
-            </div>
-            <div className="modal-header" style={{ borderTop: '1px solid #404040', justifyContent: 'flex-end' }}>
-              <button className="toolbar-btn" onClick={() => setIsGDriveLoadOpen(false)}>Close</button>
             </div>
           </div>
         </div>

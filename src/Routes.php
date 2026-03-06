@@ -20,6 +20,8 @@ return function (App $app): void {
     // Auth routes
     $app->get('/auth/google', [AuthController::class, 'googleLogin']);
     $app->get('/auth/google/callback', [AuthController::class, 'googleCallback']);
+    $app->get('/auth/github', [AuthController::class, 'githubLogin']);
+    $app->get('/auth/github/callback', [AuthController::class, 'githubCallback']);
     $app->post('/auth/logout', [AuthController::class, 'logout']);
     
     // Simple test route

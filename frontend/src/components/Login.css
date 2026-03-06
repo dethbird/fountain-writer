@@ -49,6 +49,40 @@
   flex-shrink: 0;
 }
 
+.github-login-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 24px;
+  background: #24292e;
+  color: #ffffff;
+  border: none;
+  border-radius: 6px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+  margin-top: 12px;
+}
+
+.github-login-btn:hover {
+  background: #2f363d;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.4);
+  transform: translateY(-1px);
+}
+
+.github-login-btn:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.github-icon {
+  flex-shrink: 0;
+}
+
 @media (max-width: 480px) {
   .login-card {
     padding: 32px 24px;

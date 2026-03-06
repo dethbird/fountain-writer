@@ -5,6 +5,7 @@ namespace App\Controllers;
 
 use App\Services\Database;
 use Jumbojett\OpenIDConnectClient;
+use League\OAuth2\Client\Provider\Github as GithubProvider;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 use SlimSession\Helper as SessionHelper;
@@ -89,6 +90,126 @@ class AuthController
     }
 
     /**
+     * Initiate GitHub OAuth login flow
+     * GET /auth/github
+     */
+    public function githubLogin(Request $request, Response $response): Response
+    {
+        $session = new SessionHelper();
+
+        try {
+            $provider = $this->createGithubProvider();
+            $authUrl  = $provider->getAuthorizationUrl([
+                'scope' => ['read:user', 'user:email'],
+            ]);
+
+            // Store state in session for CSRF validation
+            $session->set('oauth2_github_state', $provider->getState());
+
+            return $response
+                ->withHeader('Location', $authUrl)
+                ->withStatus(302);
+
+        } catch (\Exception $e) {
+            error_log('GitHub login error: ' . $e->getMessage());
+            $appUrl = $_ENV['APP_BASE_URL'] ?? '';
+            return $response
+                ->withHeader('Location', $appUrl . '/?auth_error=1')
+                ->withStatus(302);
+        }
+    }
+
+    /**
+     * Handle GitHub OAuth callback
+     * GET /auth/github/callback
+     */
+    public function githubCallback(Request $request, Response $response): Response
+    {
+        $session = new SessionHelper();
+        $params  = $request->getQueryParams();
+
+        // Check for an error returned by GitHub
+        if (!empty($params['error'])) {
+            error_log('GitHub callback error param: ' . $params['error']);
+            $appUrl = $_ENV['APP_BASE_URL'] ?? '';
+            return $response
+                ->withHeader('Location', $appUrl . '/?auth_error=1')
+                ->withStatus(302);
+        }
+
+        // Validate state to prevent CSRF
+        $storedState = $session->get('oauth2_github_state');
+        $session->delete('oauth2_github_state');
+
+        if (empty($params['state']) || $params['state'] !== $storedState) {
+            error_log('GitHub callback: state mismatch (possible CSRF)');
+            $appUrl = $_ENV['APP_BASE_URL'] ?? '';
+            return $response
+                ->withHeader('Location', $appUrl . '/?auth_error=1')
+                ->withStatus(302);
+        }
+
+        try {
+            $provider = $this->createGithubProvider();
+
+            // Exchange authorization code for access token
+            $token = $provider->getAccessToken('authorization_code', [
+                'code' => $params['code'],
+            ]);
+
+            // Fetch the authenticated user's profile
+            $owner     = $provider->getResourceOwner($token);
+            $ownerData = $owner->toArray();
+
+            $subject = (string) $owner->getId();
+            $name    = $owner->getName() ?? $owner->getNickname();
+            $picture = $ownerData['avatar_url'] ?? null;
+            $email   = $owner->getEmail();
+
+            // If the profile email is private, fetch it via the emails API
+            if (!$email) {
+                $emailsRequest  = $provider->getAuthenticatedRequest(
+                    'GET',
+                    'https://api.github.com/user/emails',
+                    $token
+                );
+                $emailsResponse = $provider->getParsedResponse($emailsRequest);
+                foreach ($emailsResponse as $entry) {
+                    if (!empty($entry['primary']) && !empty($entry['verified'])) {
+                        $email = $entry['email'];
+                        break;
+                    }
+                }
+            }
+
+            if (!$email || !$subject) {
+                throw new \Exception('Could not retrieve email or user ID from GitHub');
+            }
+
+            // Upsert user + identity — same logic as Google; same email links accounts
+            $userId = $this->upsertUser($email, $name, $picture, 'https://github.com', $subject, true);
+
+            // Set session
+            $session->set('user_id', $userId);
+            $session->set('email', $email);
+            $session->set('name', $name);
+            $session->set('picture', $picture);
+
+            $appUrl = $_ENV['APP_BASE_URL'] ?? '';
+            return $response
+                ->withHeader('Location', $appUrl . '/')
+                ->withStatus(302);
+
+        } catch (\Exception $e) {
+            error_log('GitHub callback error: ' . $e->getMessage());
+            $appUrl = $_ENV['APP_BASE_URL'] ?? '';
+            return $response
+                ->withHeader('Location', $appUrl . '/?auth_error=1')
+                ->withStatus(302);
+        }
+    }
+
+    /**
      * Logout - clear session
      * POST /auth/logout
      */
@@ -151,6 +272,18 @@ class AuthController
             error_log('Error fetching user: ' . $e->getMessage());
             return $this->jsonError($response, 'Failed to fetch user', 500);
         }
+    }
+
+    /**
+     * Create configured GitHub OAuth2 provider
+     */
+    private function createGithubProvider(): GithubProvider
+    {
+        return new GithubProvider([
+            'clientId'     => $_ENV['GITHUB_CLIENT_ID'],
+            'clientSecret' => $_ENV['GITHUB_CLIENT_SECRET'],
+            'redirectUri'  => $_ENV['GITHUB_REDIRECT_URI'],
+        ]);
     }
 
     /**
